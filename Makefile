@@ -1,3 +1,10 @@
+# Set database environment variables
+export DB_USER=test
+export DB_PASSWORD=test
+export DB_HOST=localhost
+export DB_PORT=3306
+export DB_NAME=url_shortner
+
 .PHONY: run_url_shortner
 run_url_shortner: setup_db dummy-data
 	go run main.go
