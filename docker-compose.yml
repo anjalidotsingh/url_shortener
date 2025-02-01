@@ -1,0 +1,17 @@
+version: '3.1'
+
+services:
+  db:
+    container_name: url_shortner_db_container
+    image: mysql:8
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: bozcar
+      MYSQL_DATABASE: url_shortner
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+      TZ: Europe/Dublin
+    ports:
+      - 3306:3306
+    volumes:
+      - ./db/docker:/docker-entrypoint-initdb.d
