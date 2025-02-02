@@ -28,5 +28,5 @@ setup_db:
 dummy-data:
 	@echo "Inserting dummy data into tables..."
 	@docker exec -i url_shortner_db_container mysql -uroot -pbozcar url_shortner -e "INSERT INTO url_mapping (actual_url, reference_key) VALUES ('https://www.google.co.in/', 'abc123');"
-	@docker exec -i url_shortner_db_container mysql -uroot -pbozcar url_shortner -e "INSERT INTO url_count (domain_name, count) VALUES ('www.google.co.in', 1);"
+	@docker exec -i url_shortner_db_container mysql -uroot -pbozcar url_shortner -e "INSERT INTO url_count (domain_name, count) VALUES ('google.co.in', 1);"
 	@echo "Dummy data inserted."

@@ -2,6 +2,7 @@ package route
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,18 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+type shortenRequest struct {
+	URL string `json:"url"`
+}
+
+type shortenResponse struct {
+	ShortenUrl string `json:"shortenUrl"`
+}
+
+type domainCount struct {
+	Domain string `json:"domain"`
+	Count  int    `json:"count"`
+}
 type Handler struct {
 	DB *sqlx.DB
 }
@@ -20,9 +33,9 @@ type Handler struct {
 func (h Handler) SetupRouter() *mux.Router {
 	r := mux.NewRouter()
 	r.Use(recoveryMiddleware)
-	r.HandleFunc("/test", testRedirect).Methods("GET")
-	r.HandleFunc("/{url}", h.addShortnedUrl).Methods("PUT")
-	r.HandleFunc("/{referenceKey}", h.addShortnedUrl).Methods("GET")
+	r.HandleFunc("/shorten", h.addShortnedUrl).Methods(http.MethodPost)
+	r.HandleFunc("/resolve/{referenceKey}", h.getOriginalUrl).Methods("GET")
+	r.HandleFunc("/domain-counts", h.getTopDomains).Methods("GET")
 	return r
 }
 
@@ -38,21 +51,20 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func testRedirect(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Location", "https://www.google.com")
-	w.WriteHeader(http.StatusPermanentRedirect)
-}
-
 // Handler function for URL shortening
 func (h Handler) addShortnedUrl(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	rawURL, exists := vars["url"]
-	if !exists || rawURL == "" {
-		http.Error(w, "Missing 'url' in path parameter", http.StatusBadRequest)
+	var req shortenRequest
+
+	// Decode the request body into req struct
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil || req.URL == "" {
+		http.Error(w, "Invalid JSON input or missing 'url'", http.StatusBadRequest)
 		return
 	}
+
+	rawURL := req.URL
 	// Validate if the URL is valid
-	_, err := url.ParseRequestURI(rawURL)
+	_, err = url.ParseRequestURI(rawURL)
 	if err != nil {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
@@ -61,21 +73,28 @@ func (h Handler) addShortnedUrl(w http.ResponseWriter, r *http.Request) {
 	var existingReferenceKey string
 	err = h.DB.Get(&existingReferenceKey, "SELECT reference_key FROM url_mapping WHERE actual_url = ?", rawURL)
 	if err == nil {
-		// URL already exists, return reference key
+		response := shortenResponse{
+			ShortenUrl: fmt.Sprintf("http://%s/resolve/%s", r.Host, existingReferenceKey),
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("URL shortened: %s", fmt.Sprintf("%s://%s/%s", r.Proto, r.Host, existingReferenceKey))))
+		json.NewEncoder(w).Encode(response)
 		return
 	}
-
+	existingReferenceKey = uuid.New().String()
 	query := "INSERT INTO url_mapping (actual_url, reference_key) VALUES (?, ?)"
-	_, err = h.DB.Exec(query, rawURL, uuid.New().String())
+	_, err = h.DB.Exec(query, rawURL, existingReferenceKey)
 	if err != nil {
 		http.Error(w, "Failed to insert URL", http.StatusInternalServerError)
 		return
 	}
 	h.updateURLCount(rawURL)
+	response := shortenResponse{
+		ShortenUrl: fmt.Sprintf("http://%s/resolve/%s", r.Host, existingReferenceKey),
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("URL shortened: %s", fmt.Sprintf("%s://%s/%s", r.Proto, r.Host, existingReferenceKey))))
+	json.NewEncoder(w).Encode(response)
 }
 
 func extractDomain(rawURL string) (string, error) {
@@ -129,5 +148,23 @@ func (h Handler) getOriginalUrl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Location", originalURL)
-	w.WriteHeader(http.StatusPermanentRedirect)
+	w.WriteHeader(http.StatusMovedPermanently)
+}
+
+func (h Handler) getTopDomains(w http.ResponseWriter, r *http.Request) {
+	var topDomains []domainCount
+	err := h.DB.Select(&topDomains, `
+		SELECT domain_name AS domain, count 
+		FROM url_count 
+		ORDER BY count DESC 
+		LIMIT 4`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve top domains: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(topDomains)
 }
